@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WorkSync Call Demo</title>
+  <link rel="stylesheet" href="style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <header>
+      <h1>WorkSync Calls</h1>
+      <div id="user-info">
+        <input type="text" id="username-input" placeholder="Enter your name">
+        <button id="register-btn">Register</button>
+      </div>
+    </header>
+
+    <main>
+      <div class="users-section">
+        <h2>Online Users</h2>
+        <ul id="users-list"></ul>
+      </div>
+
+      <div class="call-section">
+        <div id="video-container" class="hidden">
+          <div class="remote-video-wrapper">
+            <video id="remote-video" autoplay playsinline></video>
+            <div id="remote-name" class="video-label">Remote User</div>
+          </div>
+          <div class="local-video-wrapper">
+            <video id="local-video" autoplay playsinline muted></video>
+            <div class="video-label">You</div>
+          </div>
+        </div>
+
+        <div id="call-controls" class="hidden controls">
+          <button id="mute-btn" class="control-btn" title="Mute Audio">🎤</button>
+          <button id="camera-btn" class="control-btn" title="Toggle Camera">📹</button>
+          <button id="end-btn" class="control-btn end-call" title="End Call">📞</button>
+        </div>
+
+        <div id="status-display">Idle</div>
+      </div>
+    </main>
+
+    <div id="incoming-modal" class="modal hidden">
+      <div class="modal-content">
+        <h3 id="incoming-title">Incoming Call...</h3>
+        <p id="incoming-caller">From: User</p>
+        <div class="modal-actions">
+          <button id="reject-btn" class="reject">Reject</button>
+          <button id="accept-btn" class="accept">Accept</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
