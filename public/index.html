@@ -3,28 +3,110 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WorkSync Call Demo</title>
+  <title>WorkSync – Connect & Call</title>
+  <meta name="description" content="WorkSync real-time voice and video calling with online users.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
+
   <div class="app-container">
-    <header>
-      <h1>WorkSync Calls</h1>
-      <div id="user-info">
-        <input type="text" id="username-input" placeholder="Enter your name">
-        <button id="register-btn">Register</button>
+
+    <!-- ── Navbar ── -->
+    <header class="navbar">
+      <div class="navbar-brand">
+        <span class="brand-name">WorkSync</span>
+      </div>
+      <div id="user-info" class="navbar-user">
+        <input type="text" id="username-input" placeholder="Enter your name…" autocomplete="off">
+        <button id="register-btn">Join</button>
       </div>
     </header>
 
-    <main>
-      <div class="users-section">
-        <h2>Online Users</h2>
-        <ul id="users-list"></ul>
-      </div>
+    <!-- ── Main Layout ── -->
+    <main class="main-layout">
 
-      <div class="call-section">
-        <div id="video-container" class="hidden">
+      <!-- Left Sidebar – Online Users -->
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <h2>Online Users</h2>
+          <span id="online-count" class="online-badge">0</span>
+        </div>
+        <ul id="users-list"></ul>
+      </aside>
+
+      <!-- Right – Chat / Idle Panel -->
+      <section class="chat-panel" id="chat-panel">
+
+        <!-- Idle state -->
+        <div id="idle-view" class="idle-view">
+          <div class="idle-content">
+            <div class="idle-icon">💬</div>
+            <h3 class="idle-title">Connect with people online</h3>
+            <p class="idle-subtitle">Select a user from the sidebar to start a conversation or make a call.</p>
+          </div>
+        </div>
+
+        <!-- Active chat view (hidden until user selected) -->
+        <div id="active-chat" class="active-chat hidden">
+
+          <!-- Chat header -->
+          <div class="chat-header">
+            <div class="chat-header-user">
+              <div class="avatar avatar-lg" id="chat-partner-avatar"></div>
+              <div class="chat-header-info">
+                <span id="chat-partner-name" class="chat-partner-name">User</span>
+                <span class="online-dot-label"><span class="dot"></span> Online</span>
+              </div>
+            </div>
+            <!-- Call buttons – top right -->
+            <div class="chat-call-actions">
+              <button id="voice-call-btn" class="icon-btn" title="Voice Call" aria-label="Start voice call">
+                <!-- Phone icon SVG -->
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                  <path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C9.61 21 3 14.39 3 6a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2z"/>
+                </svg>
+              </button>
+              <button id="video-call-btn" class="icon-btn" title="Video Call" aria-label="Start video call">
+                <!-- Video icon SVG -->
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
+                  <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Messages area -->
+          <div class="messages-area" id="messages-area">
+            <div class="messages-placeholder">
+              <p>Say hello! 👋</p>
+            </div>
+          </div>
+
+          <!-- Chat input bar -->
+          <div class="chat-input-bar">
+            <button class="attach-btn" title="Attach file" aria-label="Attach file">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66L9.64 16.34a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+              </svg>
+            </button>
+            <input type="text" id="chat-input" class="chat-input" placeholder="Type a message…" autocomplete="off">
+            <button class="emoji-btn" title="Emoji" aria-label="Emoji">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                <circle cx="12" cy="12" r="10"/><path d="M8 13s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>
+              </svg>
+            </button>
+            <button class="send-btn" id="send-btn" title="Send" aria-label="Send message">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- ── Video / Call UI (overlays chat) ── -->
+        <div id="video-container" class="video-container hidden">
           <div class="remote-video-wrapper">
             <video id="remote-video" autoplay playsinline></video>
             <div id="remote-name" class="video-label">Remote User</div>
@@ -33,28 +115,54 @@
             <video id="local-video" autoplay playsinline muted></video>
             <div class="video-label">You</div>
           </div>
+          <!-- In-call controls -->
+          <div id="call-controls" class="call-controls hidden">
+            <button id="mute-btn" class="control-btn" title="Mute Audio" aria-label="Mute">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 14 0h-2zm-5 9v-2"/>
+              </svg>
+            </button>
+            <button id="camera-btn" class="control-btn" title="Toggle Camera" aria-label="Toggle camera">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/>
+              </svg>
+            </button>
+            <button id="end-btn" class="control-btn end-call" title="End Call" aria-label="End call">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
+                <path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C9.61 21 3 14.39 3 6a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2z" transform="rotate(135 12 12)"/>
+              </svg>
+            </button>
+          </div>
         </div>
 
-        <div id="call-controls" class="hidden controls">
-          <button id="mute-btn" class="control-btn" title="Mute Audio">🎤</button>
-          <button id="camera-btn" class="control-btn" title="Toggle Camera">📹</button>
-          <button id="end-btn" class="control-btn end-call" title="End Call">📞</button>
-        </div>
-
-        <div id="status-display">Idle</div>
-      </div>
+      </section>
     </main>
 
+    <!-- Status toast -->
+    <div id="status-display" class="status-toast hidden">Idle</div>
+
+    <!-- Incoming call modal -->
     <div id="incoming-modal" class="modal hidden">
       <div class="modal-content">
-        <h3 id="incoming-title">Incoming Call...</h3>
+        <div class="modal-avatar" id="modal-avatar"></div>
+        <h3 id="incoming-title">Incoming Call…</h3>
         <p id="incoming-caller">From: User</p>
         <div class="modal-actions">
-          <button id="reject-btn" class="reject">Reject</button>
-          <button id="accept-btn" class="accept">Accept</button>
+          <button id="reject-btn" class="btn-reject" aria-label="Reject call">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
+              <path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C9.61 21 3 14.39 3 6a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2z" transform="rotate(135 12 12)"/>
+            </svg>
+          </button>
+          <button id="accept-btn" class="btn-accept" aria-label="Accept call">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
+              <path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C9.61 21 3 14.39 3 6a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2z"/>
+            </svg>
+          </button>
         </div>
+        <p class="modal-hint">Swipe or tap to respond</p>
       </div>
     </div>
+
   </div>
 
   <script src="/socket.io/socket.io.js"></script>

@@ -1,10 +1,7 @@
-// =============================================
-// WorkSync - Voice & Video Calling (WebRTC)
-// =============================================
 
 const socket = io();
 
-// WebRTC configuration - STUN only; add TURN for production
+// WebRTC config – STUN only; add TURN for production
 const rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -12,98 +9,181 @@ const rtcConfig = {
   ]
 };
 
-// State
-let mySocketId = null;
-let myUsername = '';
+// ── State ──────────────────────────────────────
+let mySocketId    = null;
+let myUsername    = '';
 let peerConnection = null;
-let localStream = null;
-let remoteStream = null;
+let localStream   = null;
+let remoteStream  = null;
 let currentCallType = 'voice'; // 'voice' | 'video'
-let callState = 'idle'; // idle | calling | incoming | connecting | connected | ended
-let callPartner = null; // { id, name }
-let ringTimeout = null;
-let audioMuted = false;
-let videoOff = false;
+let callState     = 'idle';    // idle | calling | incoming | connecting | connected
+let callPartner   = null;      // { id, name }
+let ringTimeout   = null;
+let audioMuted    = false;
+let videoOff      = false;
+let selectedUser  = null;      // currently selected user in sidebar { id, name }
 
-// DOM elements
-const usernameInput = document.getElementById('username-input');
-const registerBtn = document.getElementById('register-btn');
-const usersList = document.getElementById('users-list');
-const videoContainer = document.getElementById('video-container');
-const localVideo = document.getElementById('local-video');
-const remoteVideo = document.getElementById('remote-video');
-const callControls = document.getElementById('call-controls');
-const muteBtn = document.getElementById('mute-btn');
-const cameraBtn = document.getElementById('camera-btn');
-const endBtn = document.getElementById('end-btn');
-const statusDisplay = document.getElementById('status-display');
-const incomingModal = document.getElementById('incoming-modal');
-const incomingTitle = document.getElementById('incoming-title');
-const incomingCaller = document.getElementById('incoming-caller');
-const acceptBtn = document.getElementById('accept-btn');
-const rejectBtn = document.getElementById('reject-btn');
+// Avatar color cycles
+const AVATAR_COLORS = 8;
+const userColorMap  = {};
 
-// =============================================
-// Registration
-// =============================================
+// ── DOM Elements ──────────────────────────────
+const usernameInput   = document.getElementById('username-input');
+const registerBtn     = document.getElementById('register-btn');
+const usersList       = document.getElementById('users-list');
+const onlineCount     = document.getElementById('online-count');
+const idleView        = document.getElementById('idle-view');
+const activeChat      = document.getElementById('active-chat');
+const chatPartnerName = document.getElementById('chat-partner-name');
+const chatPartnerAvatar = document.getElementById('chat-partner-avatar');
+const voiceCallBtn    = document.getElementById('voice-call-btn');
+const videoCallBtn    = document.getElementById('video-call-btn');
+const videoContainer  = document.getElementById('video-container');
+const localVideo      = document.getElementById('local-video');
+const remoteVideo     = document.getElementById('remote-video');
+const callControls    = document.getElementById('call-controls');
+const muteBtn         = document.getElementById('mute-btn');
+const cameraBtn       = document.getElementById('camera-btn');
+const endBtn          = document.getElementById('end-btn');
+const statusDisplay   = document.getElementById('status-display');
+const incomingModal   = document.getElementById('incoming-modal');
+const incomingTitle   = document.getElementById('incoming-title');
+const incomingCaller  = document.getElementById('incoming-caller');
+const acceptBtn       = document.getElementById('accept-btn');
+const rejectBtn       = document.getElementById('reject-btn');
+const modalAvatar     = document.getElementById('modal-avatar');
+
+// ── Helpers ────────────────────────────────────
+
+function getAvatarColor(userId) {
+  if (!(userId in userColorMap)) {
+    userColorMap[userId] = Object.keys(userColorMap).length % AVATAR_COLORS;
+  }
+  return userColorMap[userId];
+}
+
+function firstLetter(name) {
+  return (name || '?').charAt(0).toUpperCase();
+}
+
+function applyAvatar(el, name, userId) {
+  el.textContent = firstLetter(name);
+  el.setAttribute('data-color', getAvatarColor(userId));
+}
+
+// ── Status Toast ───────────────────────────────
+
+let statusTimer = null;
+
+function showStatus(msg, duration = 3500) {
+  statusDisplay.textContent = msg;
+  statusDisplay.classList.remove('hidden');
+  if (statusTimer) clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => {
+    statusDisplay.classList.add('hidden');
+  }, duration);
+}
+
+function setStatus(msg) {
+  showStatus(msg);
+}
+
+// ── Registration ───────────────────────────────
 
 registerBtn.addEventListener('click', () => {
   const name = usernameInput.value.trim();
-  if (!name) return alert('Please enter your name.');
+  if (!name) { showStatus('Please enter your name.'); return; }
   myUsername = name;
   socket.emit('register', name);
   registerBtn.disabled = true;
   usernameInput.disabled = true;
-  registerBtn.textContent = 'Registered ✔';
+  registerBtn.textContent = 'Joined ✔';
+  showStatus(`Welcome, ${name}!`);
 });
 
-// =============================================
-// Users list
-// =============================================
+// ── Socket connect ─────────────────────────────
 
 socket.on('connect', () => {
   mySocketId = socket.id;
 });
 
-socket.on('users-update', (users) => {
-  usersList.innerHTML = '';
-  users.forEach((user) => {
-    if (user.id === socket.id) return; // don't show self
-    const li = document.createElement('li');
-    li.innerHTML = `
-      <span>${user.name}</span>
-      <div class="call-buttons">
-        <button class="call-btn" data-id="${user.id}" data-name="${user.name}" data-type="voice" title="Voice Call">🎙 Voice</button>
-        <button class="call-btn video" data-id="${user.id}" data-name="${user.name}" data-type="video" title="Video Call">📹 Video</button>
-      </div>`;
-    usersList.appendChild(li);
-  });
+// ── Users List ─────────────────────────────────
 
-  // Attach call button listeners
-  document.querySelectorAll('.call-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      if (!myUsername) return alert('Please register first.');
-      if (callState !== 'idle') return alert('You are already in a call.');
-      const targetId = btn.dataset.id;
-      const targetName = btn.dataset.name;
-      const type = btn.dataset.type;
-      startCall(targetId, targetName, type);
-    });
+socket.on('users-update', (users) => {
+  const others = users.filter(u => u.id !== socket.id);
+  onlineCount.textContent = others.length;
+  usersList.innerHTML = '';
+
+  others.forEach((user) => {
+    const li = document.createElement('li');
+    li.dataset.id   = user.id;
+    li.dataset.name = user.name;
+
+    // Avatar
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    applyAvatar(avatar, user.name, user.id);
+
+    // Info
+    const info = document.createElement('div');
+    info.innerHTML = `
+      <div class="user-name">${user.name}</div>
+      <div class="user-status">● Online</div>`;
+
+    li.appendChild(avatar);
+    li.appendChild(info);
+
+    // Highlight if already selected
+    if (selectedUser && selectedUser.id === user.id) {
+      li.classList.add('active');
+    }
+
+    li.addEventListener('click', () => selectUser(user.id, user.name));
+    usersList.appendChild(li);
   });
 });
 
-// =============================================
-// Call State UI helper
-// =============================================
+// ── Select / Open Chat ─────────────────────────
 
-function setStatus(msg) {
-  statusDisplay.textContent = msg;
+function selectUser(id, name) {
+  selectedUser = { id, name };
+
+  // Highlight in sidebar
+  document.querySelectorAll('#users-list li').forEach(li => {
+    li.classList.toggle('active', li.dataset.id === id);
+  });
+
+  // Update chat header
+  chatPartnerName.textContent = name;
+  applyAvatar(chatPartnerAvatar, name, id);
+
+  // Switch views
+  idleView.classList.add('hidden');
+  activeChat.classList.remove('hidden');
 }
+
+// ── Call via top-right icons ───────────────────
+
+voiceCallBtn.addEventListener('click', () => {
+  if (!selectedUser) return;
+  if (!myUsername) { showStatus('Please register first.'); return; }
+  if (callState !== 'idle') { showStatus('You are already in a call.'); return; }
+  startCall(selectedUser.id, selectedUser.name, 'voice');
+});
+
+videoCallBtn.addEventListener('click', () => {
+  if (!selectedUser) return;
+  if (!myUsername) { showStatus('Please register first.'); return; }
+  if (callState !== 'idle') { showStatus('You are already in a call.'); return; }
+  startCall(selectedUser.id, selectedUser.name, 'video');
+});
+
+// ── Call UI helpers ────────────────────────────
 
 function showCallUI(type) {
   videoContainer.classList.remove('hidden');
   callControls.classList.remove('hidden');
-  // Show camera button only for video calls
+  // Camera button only for video
   cameraBtn.style.display = type === 'video' ? 'flex' : 'none';
 }
 
@@ -112,10 +192,11 @@ function hideCallUI() {
   callControls.classList.add('hidden');
 }
 
-function showIncomingModal(callerName, type) {
-  const emoji = type === 'video' ? '📹' : '🎙';
+function showIncomingModal(callerName, callerId, type) {
+  const emoji = type === 'video' ? '📹' : '📞';
   incomingTitle.textContent = `${emoji} Incoming ${type === 'video' ? 'Video' : 'Voice'} Call`;
   incomingCaller.textContent = `From: ${callerName}`;
+  applyAvatar(modalAvatar, callerName, callerId);
   incomingModal.classList.remove('hidden');
 }
 
@@ -123,17 +204,12 @@ function hideIncomingModal() {
   incomingModal.classList.add('hidden');
 }
 
-// =============================================
-// WebRTC helpers
-// =============================================
+// ── WebRTC Helpers ─────────────────────────────
 
 function createPeerConnection() {
-  if (peerConnection) {
-    peerConnection.close();
-  }
+  if (peerConnection) peerConnection.close();
   peerConnection = new RTCPeerConnection(rtcConfig);
 
-  // Send ICE candidates to partner
   peerConnection.onicecandidate = (event) => {
     if (event.candidate && callPartner) {
       socket.emit('ice-candidate', {
@@ -143,7 +219,6 @@ function createPeerConnection() {
     }
   };
 
-  // Receive remote stream
   peerConnection.ontrack = (event) => {
     if (!remoteStream) {
       remoteStream = new MediaStream();
@@ -153,10 +228,8 @@ function createPeerConnection() {
   };
 
   peerConnection.oniceconnectionstatechange = () => {
-    console.log('ICE state:', peerConnection.iceConnectionState);
-    if (peerConnection.iceConnectionState === 'disconnected' ||
-        peerConnection.iceConnectionState === 'failed' ||
-        peerConnection.iceConnectionState === 'closed') {
+    const s = peerConnection.iceConnectionState;
+    if (s === 'disconnected' || s === 'failed' || s === 'closed') {
       handleCallEnd('Connection lost.');
     }
   };
@@ -166,10 +239,7 @@ function createPeerConnection() {
 
 async function getLocalStream(type) {
   try {
-    const constraints = {
-      audio: true,
-      video: type === 'video'
-    };
+    const constraints = { audio: true, video: type === 'video' };
     localStream = await navigator.mediaDevices.getUserMedia(constraints);
     localVideo.srcObject = localStream;
     return localStream;
@@ -177,12 +247,12 @@ async function getLocalStream(type) {
     let msg = 'Could not access media devices.';
     if (err.name === 'NotAllowedError') {
       msg = type === 'video'
-        ? '❌ Camera and microphone permissions are required for video calls.'
-        : '❌ Microphone permission is required for voice calls.';
+        ? '❌ Camera & mic permission required.'
+        : '❌ Microphone permission required.';
     } else if (err.name === 'NotFoundError') {
-      msg = '❌ Camera or microphone not found on this device.';
+      msg = '❌ Camera or microphone not found.';
     } else if (err.name === 'NotReadableError') {
-      msg = '❌ Camera or microphone is already in use by another app.';
+      msg = '❌ Device already in use by another app.';
     }
     setStatus(msg);
     throw err;
@@ -190,18 +260,12 @@ async function getLocalStream(type) {
 }
 
 function addTracksToPC(stream) {
-  stream.getTracks().forEach((track) => {
-    peerConnection.addTrack(track, stream);
-  });
+  stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
 }
 
-// =============================================
-// Outgoing Call
-// =============================================
+// ── Outgoing Call ──────────────────────────────
 
 async function startCall(targetId, targetName, type) {
-  if (!myUsername) { alert('Register first!'); return; }
-
   callPartner = { id: targetId, name: targetName };
   currentCallType = type;
   callState = 'calling';
@@ -211,7 +275,7 @@ async function startCall(targetId, targetName, type) {
 
   try {
     await getLocalStream(type);
-  } catch { return resetCallState(); }
+  } catch { resetCallState(); return; }
 
   createPeerConnection();
   addTracksToPC(localStream);
@@ -236,20 +300,17 @@ async function startCall(targetId, targetName, type) {
     }, 30000);
 
   } catch (err) {
-    console.error('Error creating offer:', err);
+    console.error('Offer error:', err);
     resetCallState();
   }
 }
 
-// =============================================
-// Incoming Call (socket event)
-// =============================================
+// ── Incoming Call ──────────────────────────────
 
 let pendingSignal = null;
 
 socket.on('incoming-call', (data) => {
   if (callState !== 'idle') {
-    // Already in a call — auto-reject
     socket.emit('reject-call', { to: data.from });
     return;
   }
@@ -257,7 +318,7 @@ socket.on('incoming-call', (data) => {
   callPartner = { id: data.from, name: data.name };
   currentCallType = data.type;
   pendingSignal = data.signal;
-  showIncomingModal(data.name, data.type);
+  showIncomingModal(data.name, data.from, data.type);
   setStatus(`Incoming ${data.type} call from ${data.name}…`);
 });
 
@@ -265,12 +326,18 @@ acceptBtn.addEventListener('click', async () => {
   hideIncomingModal();
   callState = 'connecting';
   setStatus('Connecting…');
+
+  // Auto-open chat for this caller if not already open
+  if (!selectedUser || selectedUser.id !== callPartner.id) {
+    selectUser(callPartner.id, callPartner.name);
+  }
+
   showCallUI(currentCallType);
   document.getElementById('remote-name').textContent = callPartner.name;
 
   try {
     await getLocalStream(currentCallType);
-  } catch { return resetCallState(); }
+  } catch { resetCallState(); return; }
 
   createPeerConnection();
   addTracksToPC(localStream);
@@ -280,15 +347,12 @@ acceptBtn.addEventListener('click', async () => {
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
 
-    socket.emit('answer-call', {
-      signal: answer,
-      to: callPartner.id
-    });
+    socket.emit('answer-call', { signal: answer, to: callPartner.id });
 
     callState = 'connected';
     setStatus(`Connected with ${callPartner.name}`);
   } catch (err) {
-    console.error('Error accepting call:', err);
+    console.error('Accept error:', err);
     resetCallState();
   }
 });
@@ -300,9 +364,7 @@ rejectBtn.addEventListener('click', () => {
   setStatus('Call rejected.');
 });
 
-// =============================================
-// Call Accepted by remote (Caller side)
-// =============================================
+// ── Call Accepted (caller side) ────────────────
 
 socket.on('call-accepted', async (signal) => {
   clearTimeout(ringTimeout);
@@ -314,27 +376,23 @@ socket.on('call-accepted', async (signal) => {
     callState = 'connected';
     setStatus(`Connected with ${callPartner.name}`);
   } catch (err) {
-    console.error('Error setting remote description:', err);
+    console.error('Set remote desc error:', err);
     handleCallEnd('Connection failed.');
   }
 });
 
-// =============================================
-// ICE Candidates
-// =============================================
+// ── ICE Candidates ─────────────────────────────
 
 socket.on('ice-candidate', async (data) => {
   if (!peerConnection) return;
   try {
     await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
   } catch (err) {
-    console.error('Error adding ICE candidate:', err);
+    console.error('ICE candidate error:', err);
   }
 });
 
-// =============================================
-// Call Rejected / Ended by remote
-// =============================================
+// ── Remote ended / rejected ────────────────────
 
 socket.on('call-rejected', () => {
   clearTimeout(ringTimeout);
@@ -351,82 +409,66 @@ socket.on('user-disconnected', (disconnectedId) => {
   }
 });
 
-// =============================================
-// End Call (local button)
-// =============================================
+// ── End Call (local) ───────────────────────────
 
 endBtn.addEventListener('click', () => {
-  if (callPartner) {
-    socket.emit('end-call', { to: callPartner.id });
-  }
+  if (callPartner) socket.emit('end-call', { to: callPartner.id });
   handleCallEnd('You ended the call.');
 });
 
-// =============================================
-// Cleanup
-// =============================================
+// ── Cleanup ────────────────────────────────────
 
 function handleCallEnd(message) {
   clearTimeout(ringTimeout);
-  setStatus(message || 'Call ended.');
   cleanupMedia();
   hideCallUI();
   hideIncomingModal();
   resetCallState();
-  // Briefly show the message then go idle
-  setTimeout(() => {
-    if (callState === 'idle') setStatus('Idle');
-  }, 3000);
+  setStatus(message || 'Call ended.');
 }
 
 function cleanupMedia() {
   if (localStream) {
-    localStream.getTracks().forEach((t) => t.stop());
+    localStream.getTracks().forEach(t => t.stop());
     localStream = null;
   }
   if (peerConnection) {
     peerConnection.close();
     peerConnection = null;
   }
-  localVideo.srcObject = null;
+  localVideo.srcObject  = null;
   remoteVideo.srcObject = null;
   remoteStream = null;
 }
 
 function resetCallState() {
-  callState = 'idle';
+  callState   = 'idle';
   callPartner = null;
   pendingSignal = null;
-  audioMuted = false;
-  videoOff = false;
-  muteBtn.textContent = '🎤';
+  audioMuted  = false;
+  videoOff    = false;
   muteBtn.classList.remove('disabled');
-  cameraBtn.textContent = '📹';
   cameraBtn.classList.remove('disabled');
 }
 
-// =============================================
-// Call Controls
-// =============================================
+// ── In-call Controls ───────────────────────────
 
 muteBtn.addEventListener('click', () => {
   if (!localStream) return;
-  const audioTrack = localStream.getAudioTracks()[0];
-  if (!audioTrack) return;
+  const track = localStream.getAudioTracks()[0];
+  if (!track) return;
   audioMuted = !audioMuted;
-  audioTrack.enabled = !audioMuted;
-  muteBtn.textContent = audioMuted ? '🔇' : '🎤';
+  track.enabled = !audioMuted;
   muteBtn.classList.toggle('disabled', audioMuted);
-  muteBtn.title = audioMuted ? 'Unmute' : 'Mute';
+  muteBtn.title = audioMuted ? 'Unmute' : 'Mute Audio';
 });
 
 cameraBtn.addEventListener('click', () => {
   if (!localStream) return;
-  const videoTrack = localStream.getVideoTracks()[0];
-  if (!videoTrack) return;
+  const track = localStream.getVideoTracks()[0];
+  if (!track) return;
   videoOff = !videoOff;
-  videoTrack.enabled = !videoOff;
-  cameraBtn.textContent = videoOff ? '🚫' : '📹';
+  track.enabled = !videoOff;
   cameraBtn.classList.toggle('disabled', videoOff);
   cameraBtn.title = videoOff ? 'Turn Camera On' : 'Turn Camera Off';
 });
