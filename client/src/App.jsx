@@ -206,11 +206,11 @@ export default function App() {
     pc.ontrack = ({ track }) => {
       if (!remoteStreamRef.current) {
         remoteStreamRef.current = new MediaStream();
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = remoteStreamRef.current;
-        }
       }
       remoteStreamRef.current.addTrack(track);
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+      }
     };
 
     // Handle unexpected disconnections
@@ -519,11 +519,25 @@ export default function App() {
               {isInCall && (
                 <div className="video-container">
                   <div className="remote-video-wrapper">
-                    <video ref={remoteVideoRef} autoPlay playsInline />
+                    <video 
+                      ref={el => {
+                        remoteVideoRef.current = el;
+                        if (el && remoteStreamRef.current) el.srcObject = remoteStreamRef.current;
+                      }} 
+                      autoPlay playsInline 
+                    />
                     <div className="video-label">{partnerRef.current?.name || 'Remote'}</div>
                   </div>
                   <div className="local-video-wrapper">
-                    <video ref={localVideoRef} autoPlay playsInline muted />
+                    <video 
+                      ref={el => {
+                        localVideoRef.current = el;
+                        if (el && (screenStreamRef.current || localStreamRef.current)) {
+                          el.srcObject = screenStreamRef.current || localStreamRef.current;
+                        }
+                      }} 
+                      autoPlay playsInline muted 
+                    />
                     <div className="video-label">You</div>
                   </div>
                   <div className="call-controls"> 
