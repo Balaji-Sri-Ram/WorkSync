@@ -69,6 +69,7 @@ export default function App() {
   const [audioMuted, setAudioMuted]         = useState(false);
   const [videoOff, setVideoOff]             = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [facingMode, setFacingMode]         = useState('user'); // 'user' or 'environment'
 
   // ─── Toast state ──────────────────────────────────────────────────────────
   const [toast, setToast]     = useState('');
@@ -188,7 +189,7 @@ export default function App() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
-        video: type === 'video',
+        video: type === 'video' ? { facingMode } : false,
       });
       localStreamRef.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
@@ -409,6 +410,51 @@ export default function App() {
     setVideoOff(off);
   };
 
+  // ─── Flip camera ──────────────────────────────────────────────────────────
+  const flipCamera = async () => {
+    if (callType !== 'video') return;
+    const newFacingMode = facingMode === 'user' ? 'environment' : 'user';
+    setFacingMode(newFacingMode);
+    
+    try {
+      // Get new stream with opposite camera
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { exact: newFacingMode } }, // Prefer exact
+        audio: false
+      }).catch(async () => {
+         // Fallback if exact is not supported (e.g. desktop)
+         return await navigator.mediaDevices.getUserMedia({
+           video: { facingMode: newFacingMode },
+           audio: false
+         });
+      });
+      
+      const newVideoTrack = newStream.getVideoTracks()[0];
+      const oldVideoTrack = localStreamRef.current?.getVideoTracks()[0];
+      
+      if (oldVideoTrack) oldVideoTrack.stop();
+      
+      if (localStreamRef.current) {
+        localStreamRef.current.removeTrack(oldVideoTrack);
+        localStreamRef.current.addTrack(newVideoTrack);
+        
+        // Ensure new track inherits videoOff state
+        newVideoTrack.enabled = !videoOff;
+      }
+      
+      const sender = pcRef.current?.getSenders().find(s => s.track?.kind === 'video');
+      if (sender) sender.replaceTrack(newVideoTrack);
+      
+      if (localVideoRef.current && !isScreenSharing) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+      }
+    } catch (err) {
+      console.error('Error flipping camera:', err);
+      // Revert state if failed
+      setFacingMode(facingMode);
+    }
+  };
+
   // ══════════════════════════════════════════════════════════════════════════
   // RENDER
   // ══════════════════════════════════════════════════════════════════════════
@@ -550,6 +596,22 @@ export default function App() {
               {/* In-call video overlay */}
               {isInCall && (
                 <div className="video-container">
+                  
+                  {/* Floating Top Right Controls */}
+                  <div className="top-right-controls">
+                    {/* Flip Camera (Mobile Only) */}
+                    {callType === 'video' && (
+                      <button className="icon-btn floating-btn mobile-only-btn flip-cam" title="Flip Camera" onClick={flipCamera}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="22" height="22" className="icon-animate">
+                          <polyline points="17 1 21 5 17 9" />
+                          <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+                          <polyline points="7 23 3 19 7 15" />
+                          <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+
                   <div className="remote-video-wrapper">
                     <video 
                       ref={el => {
@@ -576,23 +638,46 @@ export default function App() {
                     {/* Screen Share – video calls only */}
                     {callType === 'video' && (
                       <button className={`control-btn ${isScreenSharing ? 'screen-active' : ''}`} title={isScreenSharing ? 'Stop Sharing' : 'Share Screen'} onClick={toggleScreenShare}>
-                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20" className="icon-animate">
                           <path d="M20 3H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h6v2H8v2h8v-2h-2v-2h6a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 13H4V5h16v11z"/>
                         </svg>
                       </button>
                     )}
+                    
+                    {/* Mute Button */}
                     <button className={`control-btn ${audioMuted ? 'muted' : ''}`} title={audioMuted ? 'Unmute' : 'Mute'} onClick={toggleMute}>
-                      <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-                        <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 14 0h-2zm-5 9v-2"/>
-                      </svg>
+                      {audioMuted ? (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20" className="icon-animate icon-crossed">
+                          <line x1="1" y1="1" x2="23" y2="23" />
+                          <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
+                          <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
+                          <line x1="12" y1="19" x2="12" y2="23" />
+                          <line x1="8" y1="23" x2="16" y2="23" />
+                        </svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20" className="icon-animate">
+                          <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 14 0h-2zm-5 9v-2"/>
+                        </svg>
+                      )}
                     </button>
+
+                    {/* Camera Off Button */}
                     {callType === 'video' && (
                       <button className={`control-btn ${videoOff ? 'cam-off' : ''}`} title={videoOff ? 'Camera On' : 'Camera Off'} onClick={toggleCamera}>
-                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-                          <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/>
-                        </svg>
+                        {videoOff ? (
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20" className="icon-animate icon-crossed">
+                            <path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10" />
+                            <line x1="1" y1="1" x2="23" y2="23" />
+                          </svg>
+                        ) : (
+                          <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20" className="icon-animate">
+                            <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/>
+                          </svg>
+                        )}
                       </button>
                     )}
+
+                    {/* End Call Button */}
                     <button className="control-btn end-call" title="End Call" onClick={endCall}>
                       <svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
                         <path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C9.61 21 3 14.39 3 6a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2z" transform="rotate(135 12 12)"/>

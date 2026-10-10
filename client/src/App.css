@@ -486,6 +486,28 @@ body {
   backdrop-filter: blur(4px);
 }
 
+/* ─── Top Right Controls ─── */
+.top-right-controls {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 30;
+  display: flex;
+  gap: 12px;
+}
+
+.floating-btn {
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  backdrop-filter: blur(8px);
+  width: 44px;
+  height: 44px;
+}
+.floating-btn:hover {
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+}
+
 /* ─── In-call Controls ─── */
 .call-controls {
   position: absolute;
@@ -516,11 +538,25 @@ body {
 }
 
 .control-btn:hover        { background: rgba(255, 255, 255, 0.25); transform: scale(1.07); }
-.control-btn.muted        { background: rgba(234, 67, 53, 0.7); }
-.control-btn.cam-off      { background: rgba(234, 67, 53, 0.7); }
+.control-btn.muted        { background: rgba(234, 67, 53, 0.7); color: #fff; }
+.control-btn.cam-off      { background: rgba(234, 67, 53, 0.7); color: #fff; }
 .control-btn.screen-active { background: rgba(30, 189, 92, 0.7); }
 .control-btn.end-call     { background: var(--red); }
 .control-btn.end-call:hover { filter: brightness(1.1); }
+
+.mobile-only-btn {
+  display: none !important;
+}
+
+/* Icon Animations */
+.icon-animate {
+  animation: iconPop 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes iconPop {
+  0%   { transform: scale(0.5) rotate(-10deg); opacity: 0; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
 
 /* ─────────────────────────────────────────────
    STATUS TOAST
@@ -666,6 +702,8 @@ body {
   /* Toggle visibility based on chat-active class */
   .main-layout.chat-active .sidebar { display: none; }
   .main-layout.chat-active .chat-panel { display: flex; }
+
+  .mobile-only-btn { display: flex !important; }
 
   .chat-input-bar { padding: 10px; }
   .modal-actions { gap: 16px; }
