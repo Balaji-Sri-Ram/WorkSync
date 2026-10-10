@@ -435,7 +435,7 @@ export default function App() {
       </header>
 
       {/* ── Main Layout ────────────────────────────────────────────────── */}
-      <main className="main-layout">
+      <main className={`main-layout ${selectedUser ? 'chat-active' : ''}`}>
 
         {/* ── Sidebar ── */}
         <aside className="sidebar">
@@ -485,6 +485,11 @@ export default function App() {
               {/* Chat Header */}
               <div className="chat-header">
                 <div className="chat-header-user">
+                  <button className="mobile-back-btn" title="Back" onClick={() => setSelectedUser(null)}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="22" height="22">
+                      <path d="M15 18l-6-6 6-6"/>
+                    </svg>
+                  </button>
                   <div className="avatar avatar-lg" data-color={avatarColor(selectedUser.id)}>
                     {initial(selectedUser.name)}
                   </div>
