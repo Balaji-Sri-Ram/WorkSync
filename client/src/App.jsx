@@ -85,6 +85,7 @@ export default function App() {
   const partnerRef        = useRef(null);       // { id, name }
   const pendingSignalRef  = useRef(null);
   const ringTimerRef      = useRef(null);
+  const pendingCandidatesRef = useRef([]);      // Queue for ICE candidates
 
   // ─── Show toast notification ───────────────────────────────────────────────
   const notify = useCallback((msg, duration = 3500) => {
@@ -118,6 +119,15 @@ export default function App() {
       try {
         await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal));
         notify(`Connected with ${partnerRef.current?.name}`);
+        // Process any queued candidates
+        for (const candidate of pendingCandidatesRef.current) {
+          try {
+            await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+          } catch (e) {
+            console.error('Error adding queued ICE candidate', e);
+          }
+        }
+        pendingCandidatesRef.current = [];
       } catch (err) {
         console.error('call-accepted error:', err);
         endCallCleanup('Connection failed.');
@@ -134,7 +144,12 @@ export default function App() {
     });
 
     socket.on('ice-candidate', async ({ candidate }) => {
-      if (!pcRef.current || !candidate) return;
+      if (!candidate) return;
+      if (!pcRef.current || !pcRef.current.remoteDescription) {
+        // Queue candidates if PC isn't ready or remote description isn't set yet
+        pendingCandidatesRef.current.push(candidate);
+        return;
+      }
       try {
         await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (err) {
@@ -280,6 +295,17 @@ export default function App() {
 
     const pc     = createPC(partnerRef.current.id);
     await pc.setRemoteDescription(new RTCSessionDescription(pendingSignalRef.current));
+    
+    // Process any queued candidates that arrived before the PC was created
+    for (const candidate of pendingCandidatesRef.current) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (e) {
+        console.error('Error adding queued ICE candidate', e);
+      }
+    }
+    pendingCandidatesRef.current = [];
+
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
@@ -319,6 +345,7 @@ export default function App() {
   const resetCall = () => {
     partnerRef.current       = null;
     pendingSignalRef.current = null;
+    pendingCandidatesRef.current = [];
     setIsInCall(false);
     setIncomingCall(null);
     setAudioMuted(false);
