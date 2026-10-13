@@ -544,6 +544,13 @@ body {
 .control-btn.end-call     { background: var(--red); }
 .control-btn.end-call:hover { filter: brightness(1.1); }
 
+.floating-btn:disabled,
+.control-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .mobile-only-btn {
   display: none !important;
 }
@@ -556,6 +563,15 @@ body {
 @keyframes iconPop {
   0%   { transform: scale(0.5) rotate(-10deg); opacity: 0; }
   100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.spinning {
+  animation: spin 0.8s linear infinite !important;
 }
 
 /* ─────────────────────────────────────────────

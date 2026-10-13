@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import './App.css';
+import {
+  isMediaDevicesSupported,
+  getVideoDevices,
+  findCandidateDevice,
+  getVideoSender,
+  requestCameraStream,
+  stopMediaStream,
+  getHumanReadableMediaError,
+} from './cameraUtils.js';
 
 // ─── Socket connection ─────────────────────────────────────────────────────
 const socket = io(import.meta.env.DEV ? 'http://localhost:3000' : '/');
@@ -70,6 +79,7 @@ export default function App() {
   const [videoOff, setVideoOff]             = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [facingMode, setFacingMode]         = useState('user'); // 'user' or 'environment'
+  const [isFlippingCamera, setIsFlippingCamera] = useState(false);
 
   // ─── Toast state ──────────────────────────────────────────────────────────
   const [toast, setToast]     = useState('');
@@ -88,6 +98,29 @@ export default function App() {
   const ringTimerRef      = useRef(null);
   const pendingCandidatesRef = useRef([]);      // Queue for ICE candidates
 
+  // Concurrency lock & async synchronization refs (prevent stale closures)
+  const isSwitchingCameraRef = useRef(false);
+  const isInCallRef          = useRef(false);
+  const videoOffRef          = useRef(false);
+  const isScreenSharingRef   = useRef(false);
+  const facingModeRef        = useRef('user');
+
+  useEffect(() => { isInCallRef.current = isInCall; }, [isInCall]);
+  useEffect(() => { videoOffRef.current = videoOff; }, [videoOff]);
+  useEffect(() => { isScreenSharingRef.current = isScreenSharing; }, [isScreenSharing]);
+  useEffect(() => { facingModeRef.current = facingMode; }, [facingMode]);
+
+  // Teardown tracks and connections on unmount
+  useEffect(() => {
+    return () => {
+      clearTimeout(ringTimerRef.current);
+      clearTimeout(toastTimer.current);
+      screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+      localStreamRef.current?.getTracks().forEach((t) => t.stop());
+      pcRef.current?.close();
+    };
+  }, []);
+
   // ─── Show toast notification ───────────────────────────────────────────────
   const notify = useCallback((msg, duration = 3500) => {
     setToast(msg);
@@ -95,6 +128,34 @@ export default function App() {
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setShowToast(false), duration);
   }, []);
+
+  // ─── Reset Call State ──────────────────────────────────────────────────────
+  const resetCall = useCallback(() => {
+    partnerRef.current           = null;
+    pendingSignalRef.current     = null;
+    pendingCandidatesRef.current = [];
+    setIsInCall(false);
+    setIncomingCall(null);
+    setAudioMuted(false);
+    setVideoOff(false);
+    setIsScreenSharing(false);
+  }, []);
+
+  // ─── End Call Cleanup ──────────────────────────────────────────────────────
+  const endCallCleanup = useCallback((message) => {
+    clearTimeout(ringTimerRef.current);
+    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+    screenStreamRef.current = null;
+    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localStreamRef.current  = null;
+    pcRef.current?.close();
+    pcRef.current           = null;
+    if (localVideoRef.current)  localVideoRef.current.srcObject  = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    remoteStreamRef.current = null;
+    resetCall();
+    notify(message || 'Call ended.');
+  }, [notify, resetCall]);
 
   // ─── Socket events ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -173,7 +234,7 @@ export default function App() {
       socket.off('ice-candidate');
       socket.off('user-disconnected');
     };
-  }, [notify]);
+  }, [notify, endCallCleanup]);
 
   // ─── Join the network ──────────────────────────────────────────────────────
   const handleJoin = () => {
@@ -189,24 +250,19 @@ export default function App() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
-        video: type === 'video' ? { facingMode } : false,
+        video: type === 'video' ? { facingMode: facingModeRef.current } : false,
       });
       localStreamRef.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       return stream;
     } catch (err) {
-      const messages = {
-        NotAllowedError:   type === 'video' ? '❌ Camera & mic permission required.' : '❌ Mic permission required.',
-        NotFoundError:     '❌ Camera or microphone not found.',
-        NotReadableError:  '❌ Device already in use by another app.',
-      };
-      notify(messages[err.name] || 'Could not access media devices.');
+      notify(getHumanReadableMediaError(err));
       throw err;
     }
   };
 
   // ─── Create RTCPeerConnection ──────────────────────────────────────────────
-  const createPC = (partnerId) => {
+  const createPC = () => {
     pcRef.current?.close();
     const pc = new RTCPeerConnection(RTC_CONFIG);
     pcRef.current = pc;
@@ -238,7 +294,7 @@ export default function App() {
     };
 
     // Add local tracks to the connection
-    localStreamRef.current?.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current));
+    localStreamRef.current?.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current));
 
     return pc;
   };
@@ -258,7 +314,7 @@ export default function App() {
       await getMedia(type);
     } catch { resetCall(); return; }
 
-    const pc     = createPC(selectedUser.id);
+    const pc     = createPC();
     const offer  = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
@@ -294,7 +350,7 @@ export default function App() {
       await getMedia(callType);
     } catch { resetCall(); return; }
 
-    const pc     = createPC(partnerRef.current.id);
+    const pc = createPC();
     await pc.setRemoteDescription(new RTCSessionDescription(pendingSignalRef.current));
     
     // Process any queued candidates that arrived before the PC was created
@@ -328,32 +384,6 @@ export default function App() {
     endCallCleanup('You ended the call.');
   };
 
-  const endCallCleanup = (message) => {
-    clearTimeout(ringTimerRef.current);
-    screenStreamRef.current?.getTracks().forEach(t => t.stop());
-    screenStreamRef.current = null;
-    localStreamRef.current?.getTracks().forEach(t => t.stop());
-    localStreamRef.current  = null;
-    pcRef.current?.close();
-    pcRef.current           = null;
-    if (localVideoRef.current)  localVideoRef.current.srcObject  = null;
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-    remoteStreamRef.current = null;
-    resetCall();
-    notify(message || 'Call ended.');
-  };
-
-  const resetCall = () => {
-    partnerRef.current       = null;
-    pendingSignalRef.current = null;
-    pendingCandidatesRef.current = [];
-    setIsInCall(false);
-    setIncomingCall(null);
-    setAudioMuted(false);
-    setVideoOff(false);
-    setIsScreenSharing(false);
-  };
-
   // ─── Screen sharing ───────────────────────────────────────────────────────
   const toggleScreenShare = async () => {
     if (!isScreenSharing) {
@@ -363,8 +393,8 @@ export default function App() {
 
         // Replace the video track sent to remote peer
         const screenTrack = screenStream.getVideoTracks()[0];
-        const sender = pcRef.current?.getSenders().find(s => s.track?.kind === 'video');
-        sender?.replaceTrack(screenTrack);
+        const sender = getVideoSender(pcRef.current);
+        await sender?.replaceTrack(screenTrack);
 
         // Show screen in local preview
         if (localVideoRef.current) localVideoRef.current.srcObject = screenStream;
@@ -380,14 +410,16 @@ export default function App() {
     }
   };
 
-  const stopScreenShare = () => {
-    screenStreamRef.current?.getTracks().forEach(t => t.stop());
+  const stopScreenShare = async () => {
+    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
     screenStreamRef.current = null;
 
     // Swap back to webcam
     const webcamTrack = localStreamRef.current?.getVideoTracks()[0];
-    const sender = pcRef.current?.getSenders().find(s => s.track?.kind === 'video');
-    if (sender && webcamTrack) sender.replaceTrack(webcamTrack);
+    const sender = getVideoSender(pcRef.current);
+    if (sender && webcamTrack) {
+      await sender.replaceTrack(webcamTrack);
+    }
     if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current;
     setIsScreenSharing(false);
   };
@@ -412,46 +444,155 @@ export default function App() {
 
   // ─── Flip camera ──────────────────────────────────────────────────────────
   const flipCamera = async () => {
-    if (callType !== 'video') return;
-    const newFacingMode = facingMode === 'user' ? 'environment' : 'user';
-    setFacingMode(newFacingMode);
-    
+    if (callType !== 'video' || !isInCallRef.current) return;
+    if (isSwitchingCameraRef.current) return;
+
+    if (!isMediaDevicesSupported()) {
+      notify('❌ Camera API is not supported in this browser or context.');
+      return;
+    }
+
+    isSwitchingCameraRef.current = true;
+    setIsFlippingCamera(true);
+
+    const currentFacing = facingModeRef.current;
+    const targetFacing = currentFacing === 'user' ? 'environment' : 'user';
+    const oldVideoTrack = localStreamRef.current?.getVideoTracks()[0];
+    const currentDeviceId = oldVideoTrack?.getSettings?.()?.deviceId || null;
+    const wasVideoEnabled = oldVideoTrack ? oldVideoTrack.enabled : !videoOffRef.current;
+
+    let newStream = null;
+    let oldTrackTemporarilyStopped = false;
+
     try {
-      // Get new stream with opposite camera
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { exact: newFacingMode } }, // Prefer exact
-        audio: false
-      }).catch(async () => {
-         // Fallback if exact is not supported (e.g. desktop)
-         return await navigator.mediaDevices.getUserMedia({
-           video: { facingMode: newFacingMode },
-           audio: false
-         });
-      });
-      
-      const newVideoTrack = newStream.getVideoTracks()[0];
-      const oldVideoTrack = localStreamRef.current?.getVideoTracks()[0];
-      
-      if (oldVideoTrack) oldVideoTrack.stop();
-      
+      // 1. Enumerate video devices to avoid redundant or invalid switches
+      const videoDevices = await getVideoDevices();
+      if (videoDevices.length === 1) {
+        notify('Only one camera detected on this device.');
+        return;
+      }
+
+      // Identify candidate device ID by label matching if available
+      const candidateDevice = findCandidateDevice(videoDevices, targetFacing, currentDeviceId);
+      const preferredDeviceId = candidateDevice?.deviceId || null;
+
+      // 2. Acquisition Phase
+      // Step A: Attempt non-destructive acquisition (preserves old track while acquiring)
+      try {
+        newStream = await requestCameraStream(targetFacing, preferredDeviceId);
+      } catch (acquireErr) {
+        // Step B: Controlled fallback for hardware contention
+        // (devices that cannot open two cameras concurrently, throwing NotReadableError / TrackStartError)
+        const isHardwareContention =
+          acquireErr.name === 'NotReadableError' ||
+          acquireErr.name === 'TrackStartError' ||
+          acquireErr.name === 'AbortError';
+
+        if (isHardwareContention && oldVideoTrack && oldVideoTrack.readyState === 'live') {
+          console.warn('Camera hardware contention detected. Stopping old track for fallback...');
+          oldVideoTrack.stop();
+          oldTrackTemporarilyStopped = true;
+
+          try {
+            newStream = await requestCameraStream(targetFacing, preferredDeviceId);
+          } catch (fallbackErr) {
+            console.error('Fallback camera acquisition failed:', fallbackErr);
+            // Step C: Graceful recovery - restore the previous camera so user isn't left without video
+            try {
+              const restoredStream = await requestCameraStream(currentFacing, currentDeviceId);
+              const restoredTrack = restoredStream.getVideoTracks()[0];
+              if (restoredTrack && localStreamRef.current) {
+                localStreamRef.current.removeTrack(oldVideoTrack);
+                localStreamRef.current.addTrack(restoredTrack);
+                restoredTrack.enabled = wasVideoEnabled;
+
+                const sender = getVideoSender(pcRef.current);
+                if (!isScreenSharingRef.current && sender) {
+                  await sender.replaceTrack(restoredTrack);
+                }
+                if (localVideoRef.current && !isScreenSharingRef.current) {
+                  localVideoRef.current.srcObject = localStreamRef.current;
+                }
+              }
+            } catch (restoreErr) {
+              console.error('Failed to restore previous camera:', restoreErr);
+            }
+            notify(getHumanReadableMediaError(fallbackErr));
+            return;
+          }
+        } else {
+          throw acquireErr;
+        }
+      }
+
+      // 3. Validation Phase
+      const newVideoTrack = newStream?.getVideoTracks()[0];
+      if (!newVideoTrack || newVideoTrack.readyState === 'ended') {
+        throw new Error('Acquired camera stream does not contain a valid active video track.');
+      }
+
+      // Verify call is still active
+      if (!isInCallRef.current || !pcRef.current) {
+        stopMediaStream(newStream);
+        return;
+      }
+
+      // 4. Multi-camera check: verify the new track is not identical to current
+      const newDeviceId = newVideoTrack.getSettings?.()?.deviceId;
+      if (videoDevices.length > 1 && currentDeviceId && newDeviceId === currentDeviceId) {
+        const altDevice = videoDevices.find((d) => d.deviceId && d.deviceId !== currentDeviceId);
+        if (altDevice?.deviceId) {
+          stopMediaStream(newStream);
+          newStream = await requestCameraStream(targetFacing, altDevice.deviceId).catch(() => null);
+        }
+      }
+
+      const finalVideoTrack = newStream?.getVideoTracks()[0];
+      if (!finalVideoTrack) {
+        throw new Error('Could not acquire an alternate camera track.');
+      }
+
+      // 5. Inherit videoOff state
+      finalVideoTrack.enabled = !videoOffRef.current;
+
+      // 6. Replace track on RTCPeerConnection sender (unless screen sharing is active)
+      const sender = getVideoSender(pcRef.current);
+      if (!isScreenSharingRef.current && sender) {
+        await sender.replaceTrack(finalVideoTrack);
+      }
+
+      // 7. Update local MediaStream and local video preview
       if (localStreamRef.current) {
-        localStreamRef.current.removeTrack(oldVideoTrack);
-        localStreamRef.current.addTrack(newVideoTrack);
-        
-        // Ensure new track inherits videoOff state
-        newVideoTrack.enabled = !videoOff;
+        if (oldVideoTrack) {
+          localStreamRef.current.removeTrack(oldVideoTrack);
+        }
+        localStreamRef.current.addTrack(finalVideoTrack);
+      } else {
+        localStreamRef.current = new MediaStream([finalVideoTrack]);
       }
-      
-      const sender = pcRef.current?.getSenders().find(s => s.track?.kind === 'video');
-      if (sender) sender.replaceTrack(newVideoTrack);
-      
-      if (localVideoRef.current && !isScreenSharing) {
+
+      // Safely stop obsolete old track if it wasn't already stopped during fallback
+      if (oldVideoTrack && !oldTrackTemporarilyStopped && oldVideoTrack !== finalVideoTrack) {
+        oldVideoTrack.stop();
+      }
+
+      if (localVideoRef.current && !isScreenSharingRef.current) {
         localVideoRef.current.srcObject = localStreamRef.current;
+        localVideoRef.current.play?.().catch(() => {});
       }
+
+      // 8. Update React state only after all operations succeed
+      setFacingMode(targetFacing);
+      notify(`Switched to ${targetFacing === 'environment' ? 'rear' : 'front'} camera`, 2000);
     } catch (err) {
       console.error('Error flipping camera:', err);
-      // Revert state if failed
-      setFacingMode(facingMode);
+      if (newStream) {
+        stopMediaStream(newStream);
+      }
+      notify(getHumanReadableMediaError(err));
+    } finally {
+      isSwitchingCameraRef.current = false;
+      setIsFlippingCamera(false);
     }
   };
 
@@ -601,8 +742,24 @@ export default function App() {
                   <div className="top-right-controls">
                     {/* Flip Camera (Mobile Only) */}
                     {callType === 'video' && (
-                      <button className="icon-btn floating-btn mobile-only-btn flip-cam" title="Flip Camera" onClick={flipCamera}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="22" height="22" className="icon-animate">
+                      <button
+                        className="icon-btn floating-btn mobile-only-btn flip-cam"
+                        title={isFlippingCamera ? 'Switching camera...' : `Flip to ${facingMode === 'user' ? 'rear' : 'front'} camera`}
+                        onClick={flipCamera}
+                        disabled={isFlippingCamera}
+                        aria-label="Flip Camera"
+                      >
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          width="22"
+                          height="22"
+                          className={`icon-animate ${isFlippingCamera ? 'spinning' : ''}`}
+                        >
                           <polyline points="17 1 21 5 17 9" />
                           <path d="M3 11V9a4 4 0 0 1 4-4h14" />
                           <polyline points="7 23 3 19 7 15" />
@@ -620,7 +777,7 @@ export default function App() {
                       }} 
                       autoPlay playsInline 
                     />
-                    <div className="video-label">{partnerRef.current?.name || 'Remote'}</div>
+                    <div className="video-label">{selectedUser?.name || 'Remote'}</div>
                   </div>
                   <div className="local-video-wrapper">
                     <video 
