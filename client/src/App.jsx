@@ -387,23 +387,49 @@ export default function App() {
   // ─── Screen sharing ───────────────────────────────────────────────────────
   const toggleScreenShare = async () => {
     if (!isScreenSharing) {
+      // Check if getDisplayMedia is supported (mobile browsers do not implement this API)
+      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== 'function') {
+        notify('📱 Screen sharing is not supported by mobile web browsers (OS limitation). Use a desktop browser to share screen.');
+        return;
+      }
+
       try {
         const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         screenStreamRef.current = screenStream;
 
         // Replace the video track sent to remote peer
         const screenTrack = screenStream.getVideoTracks()[0];
+        if (!screenTrack) {
+          throw new Error('No video track found in screen stream.');
+        }
+
         const sender = getVideoSender(pcRef.current);
         await sender?.replaceTrack(screenTrack);
 
         // Show screen in local preview
-        if (localVideoRef.current) localVideoRef.current.srcObject = screenStream;
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = screenStream;
+          localVideoRef.current.play?.().catch(() => {});
+        }
         setIsScreenSharing(true);
+        notify('🖥️ Screen sharing started.');
 
         // Handle when user clicks the browser's native "Stop sharing" button
         screenTrack.onended = () => stopScreenShare();
       } catch (err) {
         console.error('Screen share error:', err);
+        const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        if (err.name === 'NotAllowedError') {
+          if (isMobile) {
+            notify('📱 Mobile operating systems do not permit web browsers to capture the screen. Please use a desktop browser.');
+          } else {
+            notify('Screen sharing permission was cancelled or denied.');
+          }
+        } else {
+          notify(isMobile
+            ? '📱 Screen sharing is not available on mobile browsers. Please use a desktop browser.'
+            : `Could not start screen sharing: ${err.message || 'Unknown error'}`);
+        }
       }
     } else {
       stopScreenShare();
@@ -420,8 +446,12 @@ export default function App() {
     if (sender && webcamTrack) {
       await sender.replaceTrack(webcamTrack);
     }
-    if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current;
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = localStreamRef.current;
+      localVideoRef.current.play?.().catch(() => {});
+    }
     setIsScreenSharing(false);
+    notify('Screen sharing stopped.');
   };
 
   // ─── Toggle mute ──────────────────────────────────────────────────────────
